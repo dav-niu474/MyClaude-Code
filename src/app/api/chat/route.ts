@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   await ensureSchema();
 
   const body = await request.json();
-  const { sessionId, message } = body;
+  const { sessionId, message, model, temperature, systemPrompt: customSystemPrompt } = body;
 
   if (!sessionId || !message) {
     return new Response(JSON.stringify({ error: 'Session ID and message are required' }), {
@@ -66,7 +66,13 @@ export async function POST(request: Request) {
         const zai = await ZAI.create();
 
         // Build initial messages array
-        const systemPrompt = buildAgentSystemPrompt();
+        let systemPrompt = buildAgentSystemPrompt();
+
+        // If user provided a custom system prompt, prepend it to the agent system prompt
+        if (customSystemPrompt && customSystemPrompt.trim()) {
+          systemPrompt = `## User's Custom Instructions\n${customSystemPrompt.trim()}\n\n---\n\n${systemPrompt}`;
+        }
+
         const conversationHistory = session.messages.map(m => ({
           role: m.role as 'user' | 'assistant' | 'system',
           content: m.content
@@ -87,10 +93,20 @@ export async function POST(request: Request) {
           console.log(`[Agent] Iteration ${iteration}/${MAX_AGENT_ITERATIONS}`);
 
           // Call LLM
-          const completion = await zai.chat.completions.create({
+          const completionOptions: Record<string, unknown> = {
             messages: agentMessages,
-            thinking: { type: 'disabled' }
-          });
+            thinking: { type: 'disabled' },
+          };
+
+          if (temperature !== undefined && temperature !== null) {
+            completionOptions.temperature = temperature;
+          }
+
+          if (model && model !== 'default') {
+            completionOptions.model = model;
+          }
+
+          const completion = await zai.chat.completions.create(completionOptions as Parameters<typeof zai.chat.completions.create>[0]);
 
           const response = completion.choices[0]?.message?.content || '';
           if (!response) {

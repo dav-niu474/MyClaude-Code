@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react';
+import { useState, useRef, useEffect, KeyboardEvent, useCallback, ReactNode } from 'react';
 import { Send, Square, Sparkles, Paperclip, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,6 +19,7 @@ interface ChatInputProps {
   onStop?: () => void;
   disabled?: boolean;
   isStreaming?: boolean;
+  children?: ReactNode;
 }
 
 function inferLanguageFromFileName(name: string): string {
@@ -34,7 +35,7 @@ function inferLanguageFromFileName(name: string): string {
   return map[ext] || 'text';
 }
 
-export function ChatInput({ onSend, onStop, disabled, isStreaming }: ChatInputProps) {
+export function ChatInput({ onSend, onStop, disabled, isStreaming, children }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -143,6 +144,9 @@ export function ChatInput({ onSend, onStop, disabled, isStreaming }: ChatInputPr
           >
             <Paperclip className="h-3.5 w-3.5" />
           </Button>
+
+          {/* Extra action buttons from parent (e.g. image upload) */}
+          {children}
 
           <Textarea
             ref={textareaRef}

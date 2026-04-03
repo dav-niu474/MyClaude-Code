@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
 import { ThemeProvider } from 'next-themes';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -20,6 +20,14 @@ import {
   X,
   FileCode,
   Loader2,
+  Pencil,
+  RotateCcw,
+  Sparkles,
+  Thermometer,
+  MessageCircle,
+  Download,
+  ArrowDown,
+  ImageIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +44,16 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -114,10 +132,30 @@ function EmptyState({ onNewChat }: { onNewChat: () => void }) {
   );
 }
 
+const DEFAULT_SYSTEM_PROMPT = '';
+
+const MODEL_OPTIONS = [
+  { value: 'default', label: 'Default', description: 'Standard model' },
+  { value: 'claude-sonnet-4', label: 'Claude Sonnet 4', description: 'Balanced speed & quality' },
+  { value: 'claude-opus-4', label: 'Claude Opus 4', description: 'Maximum capability' },
+];
+
 function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { theme, setTheme } = useSettingsStore();
+  const { theme, setTheme, model, setModel, temperature, setTemperature, systemPrompt, setSystemPrompt } = useSettingsStore();
   const { resolvedTheme, setTheme: setNextTheme } = useTheme();
+  const { currentSessionId, sessions, setSessions } = useChatStore();
   const [localTheme, setLocalTheme] = useState(theme);
+  const [sessionName, setSessionName] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  const currentSession = sessions.find((s) => s.id === currentSessionId);
+
+  // Sync session name when current session changes
+  useEffect(() => {
+    if (currentSession) {
+      setSessionName(currentSession.title);
+    }
+  }, [currentSession?.id]);
 
   const handleThemeChange = (newTheme: 'light' | 'dark' | 'system') => {
     setLocalTheme(newTheme);
@@ -129,17 +167,41 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     }
   };
 
+  const handleRenameSession = async () => {
+    if (!currentSessionId || !sessionName.trim() || sessionName.trim() === currentSession?.title) return;
+    setIsRenaming(true);
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: currentSessionId, title: sessionName.trim() }),
+      });
+      if (res.ok) {
+        setSessions(sessions.map((s) => s.id === currentSessionId ? { ...s, title: sessionName.trim() } : s));
+      }
+    } catch (error) {
+      console.error('Failed to rename session:', error);
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Customize your MyClaude Code experience</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">
+          {/* Appearance Section */}
           <div className="space-y-3">
-            <h4 className="text-sm font-medium">Appearance</h4>
+            <div className="flex items-center gap-2">
+              <Sun className="w-4 h-4 text-muted-foreground" />
+              <h4 className="text-sm font-medium">Appearance</h4>
+            </div>
+            <p className="text-xs text-muted-foreground">Choose your preferred color theme</p>
             <div className="grid grid-cols-3 gap-2">
               {[
                 { value: 'light', label: 'Light', icon: Sun },
@@ -163,6 +225,128 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
                 </button>
               ))}
             </div>
+          </div>
+
+          <Separator />
+
+          {/* Session Rename Section */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-muted-foreground" />
+              <h4 className="text-sm font-medium">Session Name</h4>
+            </div>
+            <p className="text-xs text-muted-foreground">Rename the current chat session</p>
+            {currentSession ? (
+              <div className="flex gap-2">
+                <Input
+                  value={sessionName}
+                  onChange={(e) => setSessionName(e.target.value)}
+                  placeholder="Enter session name..."
+                  className="flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRenameSession();
+                  }}
+                />
+                <Button
+                  onClick={handleRenameSession}
+                  disabled={!sessionName.trim() || sessionName.trim() === currentSession?.title || isRenaming}
+                  size="sm"
+                >
+                  {isRenaming ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No active session selected</p>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Model Selection Section */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-muted-foreground" />
+              <h4 className="text-sm font-medium">AI Model</h4>
+            </div>
+            <p className="text-xs text-muted-foreground">Choose which AI model to use for responses</p>
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select model" />
+              </SelectTrigger>
+              <SelectContent>
+                {MODEL_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{option.label}</span>
+                      <span className="text-xs text-muted-foreground">{option.description}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Separator />
+
+          {/* Temperature Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Thermometer className="w-4 h-4 text-muted-foreground" />
+                <h4 className="text-sm font-medium">Temperature</h4>
+              </div>
+              <Badge variant="secondary" className="text-xs tabular-nums">
+                {temperature.toFixed(1)}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Control creativity. Lower values are more focused, higher values are more creative.
+            </p>
+            <Slider
+              value={[temperature]}
+              onValueChange={([val]) => setTemperature(val)}
+              min={0}
+              max={1}
+              step={0.1}
+              className="w-full"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Precise</span>
+              <span>Balanced</span>
+              <span>Creative</span>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* System Prompt Section */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-muted-foreground" />
+                <h4 className="text-sm font-medium">System Prompt</h4>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}
+                disabled={systemPrompt === DEFAULT_SYSTEM_PROMPT}
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset to Default
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Set a custom system prompt to customize how Claude behaves in this session.
+            </p>
+            <Textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="e.g., You are an expert in React and TypeScript. Always provide code examples..."
+              className="min-h-[100px] resize-y"
+              rows={4}
+            />
           </div>
         </div>
       </DialogContent>
@@ -217,6 +401,21 @@ function ActivityIndicator({ toolCalls }: { toolCalls: ToolCall[] }) {
   );
 }
 
+function exportConversation(messages: Message[], sessionTitle: string) {
+  const md = `# ${sessionTitle}\n\nExported from MyClaude Code on ${new Date().toLocaleString()}\n\n---\n\n${messages.map(m => {
+    const role = m.role === 'user' ? '**You**' : '**Claude**';
+    return `### ${role}\n\n${m.content}\n\n`;
+  }).join('---\n\n')}`;
+
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${sessionTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function AppContent() {
   const {
     user, isAuthenticated, isLoading, logout
@@ -228,7 +427,7 @@ function AppContent() {
     setStreaming, setStreamingContent, appendStreamingContent, addMessage, reset,
     addToolCall, updateToolCall, clearToolCalls, setActiveToolName,
   } = useChatStore();
-  const { sidebarCollapsed, setSidebarCollapsed } = useSettingsStore();
+  const { sidebarCollapsed, setSidebarCollapsed, model, temperature, systemPrompt } = useSettingsStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -236,9 +435,12 @@ function AppContent() {
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'chat' | 'files'>('chat');
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Check auth on mount
   useEffect(() => {
@@ -262,11 +464,87 @@ function AppContent() {
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
-    // Use requestAnimationFrame to ensure DOM has updated
     requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
   }, [messages, streamingContent, toolCalls]);
+
+  // Track scroll position for scroll-to-bottom button
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const { scrollTop, clientHeight, scrollHeight } = container;
+      setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 100);
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [activeTab]);
+
+  const scrollToBottom = useCallback(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+  }, []);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInputFocused = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+      // Escape → stop streaming
+      if (e.key === 'Escape' && isStreaming) {
+        e.preventDefault();
+        handleStopStreaming();
+        return;
+      }
+
+      // Cmd/Ctrl + K → new chat
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        handleNewChat();
+        return;
+      }
+
+      // Cmd/Ctrl + , → settings
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+
+      // Cmd/Ctrl + / → toggle sidebar (only when not focused on input)
+      if ((e.metaKey || e.ctrlKey) && e.key === '/' && !isInputFocused) {
+        e.preventDefault();
+        setSidebarCollapsed(!sidebarCollapsed);
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isStreaming, sidebarCollapsed]);
+
+  // Image upload handler
+  const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue;
+      // Convert to base64 data URL
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachedImages((prev) => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    }
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  }, []);
+
+  const removeImage = useCallback((index: number) => {
+    setAttachedImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const loadSessions = async () => {
     try {
@@ -319,9 +597,54 @@ function AppContent() {
     setSessionToDelete(null);
   };
 
+  // Message action handlers
+  const handleRegenerateMessage = useCallback(async (messageId: string) => {
+    if (!currentSessionId || isStreaming) return;
+    // Find the user message before this assistant message
+    const msgIndex = messages.findIndex((m) => m.id === messageId);
+    if (msgIndex < 1) return;
+    const userMsg = messages[msgIndex - 1];
+    if (!userMsg || userMsg.role !== 'user') return;
+    // Remove this assistant message from UI and resend
+    useChatStore.setState({ messages: messages.slice(0, msgIndex) });
+    await sendMessageWithSession(currentSessionId, userMsg.content);
+  }, [currentSessionId, messages, isStreaming]);
+
+  const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
+    if (!currentSessionId || isStreaming) return;
+    // Find message index, remove it and all subsequent messages
+    const msgIndex = messages.findIndex((m) => m.id === messageId);
+    if (msgIndex < 0) return;
+    useChatStore.setState({ messages: messages.slice(0, msgIndex) });
+    // Re-send with new content
+    await sendMessageWithSession(currentSessionId, newContent);
+  }, [currentSessionId, messages, isStreaming]);
+
+  const handleDeleteMessage = useCallback((messageId: string) => {
+    if (isStreaming) return;
+    useChatStore.setState({ messages: messages.filter((m) => m.id !== messageId) });
+  }, [messages, isStreaming]);
+
+  // Find last assistant message id for regenerate button
+  const lastAssistantMsgId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+
   const handleSendMessage = async (content: string) => {
+    // Build full message content with image references
+    let fullMessage = content;
+    if (attachedImages.length > 0) {
+      const imageRefs = attachedImages
+        .map((img, i) => `[Attached image ${i + 1}]`)
+        .join('\n');
+      fullMessage = `${imageRefs}\n\n${content}`;
+      setAttachedImages([]);
+    }
+
     if (!currentSessionId) {
-      // Auto-create session
       try {
         const res = await fetch('/api/sessions', {
           method: 'POST',
@@ -332,8 +655,7 @@ function AppContent() {
           const data = await res.json();
           addSession(data.session);
           await setCurrentSession(data.session.id);
-          // Now send message with the new session ID
-          await sendMessageWithSession(data.session.id, content);
+          await sendMessageWithSession(data.session.id, fullMessage);
         }
       } catch (error) {
         console.error('Failed to create session:', error);
@@ -341,7 +663,7 @@ function AppContent() {
       return;
     }
 
-    await sendMessageWithSession(currentSessionId, content);
+    await sendMessageWithSession(currentSessionId, fullMessage);
   };
 
   const sendMessageWithSession = async (sessionId: string, content: string) => {
@@ -362,7 +684,7 @@ function AppContent() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, message: content }),
+        body: JSON.stringify({ sessionId, message: content, model, temperature, systemPrompt }),
       });
 
       if (!res.ok) {
@@ -623,6 +945,24 @@ function AppContent() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-40">
                     <DropdownMenuItem
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const res = await fetch(`/api/messages?sessionId=${session.id}`);
+                          if (res.ok) {
+                            const data = await res.json();
+                            exportConversation(data.messages || [], session.title);
+                          }
+                        } catch (err) {
+                          console.error('Failed to export session:', err);
+                        }
+                      }}
+                    >
+                      <Download className="w-3.5 h-3.5 mr-2" />
+                      Export
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -738,6 +1078,20 @@ function AppContent() {
           </div>
 
           <div className="ml-auto flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={messages.length === 0}
+                  onClick={() => exportConversation(messages, currentSession?.title || 'conversation')}
+                >
+                  <Download className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Export as Markdown</TooltipContent>
+            </Tooltip>
             <Badge variant="outline" className="text-xs font-normal gap-1">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               Online
@@ -804,7 +1158,14 @@ function AppContent() {
                     <div ref={chatContainerRef} className="flex-1 overflow-y-auto">
                       <div className="max-w-3xl mx-auto">
                         {messages.map((msg: Message) => (
-                          <ChatMessage key={msg.id} message={msg} />
+                          <ChatMessage
+                            key={msg.id}
+                            message={msg}
+                            isLastAssistant={msg.id === lastAssistantMsgId}
+                            onRegenerate={handleRegenerateMessage}
+                            onEditMessage={handleEditMessage}
+                            onDeleteMessage={handleDeleteMessage}
+                          />
                         ))}
 
                         {/* Tool calls - rendered between user message and AI response */}
@@ -838,13 +1199,69 @@ function AppContent() {
                       </div>
                     </div>
 
+                    {/* Scroll to bottom button */}
+                    <AnimatePresence>
+                      {showScrollBtn && (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.8 }}
+                          className="absolute bottom-24 right-8 z-10"
+                        >
+                          <Button
+                            size="icon"
+                            onClick={scrollToBottom}
+                            className="rounded-full h-9 w-9 shadow-lg border border-border bg-card/90 backdrop-blur-sm hover:bg-card"
+                          >
+                            <ArrowDown className="w-4 h-4" />
+                          </Button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
                     {/* Chat input */}
                     <ChatInput
                       onSend={handleSendMessage}
                       onStop={handleStopStreaming}
                       disabled={isStreaming}
                       isStreaming={isStreaming}
-                    />
+                    >
+                      {/* Image upload button */}
+                      <input
+                        ref={imageInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleImageSelect}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-xl flex-shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => imageInputRef.current?.click()}
+                        disabled={isStreaming}
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    </ChatInput>
+
+                    {/* Image previews */}
+                    {attachedImages.length > 0 && (
+                      <div className="max-w-3xl mx-auto flex gap-2 px-4 pb-2 flex-wrap">
+                        {attachedImages.map((img, i) => (
+                          <div key={i} className="relative group rounded-lg overflow-hidden border border-border w-20 h-20">
+                            <img src={img} alt={`Upload ${i + 1}`} className="w-full h-full object-cover" />
+                            <button
+                              onClick={() => removeImage(i)}
+                              className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </motion.div>
                 )}
 

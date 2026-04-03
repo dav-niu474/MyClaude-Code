@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Bot, User, RotateCcw, FileDown, Pencil, Save, X } from 'lucide-react';
+import { Copy, Check, Bot, User, RotateCcw, FileDown, Pencil, Save, X, Trash2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import { Message } from '@/types';
@@ -21,10 +21,19 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface ChatMessageProps {
   message: Message;
   isStreaming?: boolean;
+  onRegenerate?: (messageId: string) => void;
+  onEditMessage?: (messageId: string, newContent: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
+  isLastAssistant?: boolean;
 }
 
 interface ApplyCodeDialogProps {
@@ -109,7 +118,6 @@ function ApplyCodeDialog({ code, language, open, onOpenChange }: ApplyCodeDialog
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden space-y-4 py-2">
-          {/* File path input */}
           <div className="space-y-2">
             <Label htmlFor="file-path">File Path</Label>
             <div className="flex items-center gap-2">
@@ -130,7 +138,6 @@ function ApplyCodeDialog({ code, language, open, onOpenChange }: ApplyCodeDialog
             )}
           </div>
 
-          {/* Mode toggle */}
           <div className="flex gap-2">
             <Button
               variant={mode === 'apply' ? 'default' : 'outline'}
@@ -152,7 +159,6 @@ function ApplyCodeDialog({ code, language, open, onOpenChange }: ApplyCodeDialog
             </Button>
           </div>
 
-          {/* Code preview/edit */}
           <div className="rounded-lg border border-border overflow-hidden flex-1 min-h-0">
             <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b border-border">
               <span className="text-xs font-mono text-muted-foreground">
@@ -279,8 +285,68 @@ function CodeBlock({
   );
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: ChatMessageProps) {
+// Message action button component
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick,
+  className,
+}: {
+  icon: React.ElementType;
+  label: string;
+  onClick?: () => void;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className={cn(
+            'p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors',
+            className
+          )}
+        >
+          <Icon className="w-3.5 h-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export const ChatMessage = memo(function ChatMessage({
+  message,
+  isStreaming,
+  onRegenerate,
+  onEditMessage,
+  onDeleteMessage,
+  isLastAssistant,
+}: ChatMessageProps) {
   const isUser = message.role === 'user';
+  const [copied, setCopied] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
+
+  const handleCopy = useCallback(async () => {
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [message.content]);
+
+  const handleSaveEdit = useCallback(() => {
+    if (editContent.trim() && editContent.trim() !== message.content && onEditMessage) {
+      onEditMessage(message.id, editContent.trim());
+    }
+    setIsEditing(false);
+  }, [editContent, message.id, message.content, onEditMessage]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditContent(message.content);
+    setIsEditing(false);
+  }, [message.content]);
 
   const components = useMemo(
     () => ({
@@ -288,7 +354,6 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: C
         const match = /language-(\w+)/.exec(className || '');
         const codeString = String(children).replace(/\n$/, '');
 
-        // Inline code (no language class, short content)
         if (!match && codeString.length < 100 && !codeString.includes('\n')) {
           return (
             <code
@@ -387,28 +452,93 @@ export const ChatMessage = memo(function ChatMessage({ message, isStreaming }: C
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-sm font-medium">{isUser ? 'You' : 'Claude'}</span>
-          {!isStreaming && !isUser && (
-            <button className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground">
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-          )}
         </div>
 
-        <div className="prose prose-sm max-w-none text-foreground/90 break-words">
-          {isUser ? (
-            <p className="leading-7 whitespace-pre-wrap">{message.content}</p>
-          ) : (
-            <ReactMarkdown components={components as never}>
-              {message.content}
-            </ReactMarkdown>
-          )}
-        </div>
+        {/* Edit mode for user messages */}
+        {isUser && isEditing ? (
+          <div className="space-y-2">
+            <Textarea
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              className="min-h-[80px] max-h-[200px] resize-y text-sm"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  handleSaveEdit();
+                }
+                if (e.key === 'Escape') {
+                  handleCancelEdit();
+                }
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleSaveEdit} disabled={!editContent.trim() || editContent.trim() === message.content} className="h-7 text-xs gap-1">
+                <Save className="w-3 h-3" />
+                Save & Resubmit
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleCancelEdit} className="h-7 text-xs gap-1">
+                <X className="w-3 h-3" />
+                Cancel
+              </Button>
+              <span className="text-[10px] text-muted-foreground ml-1">
+                {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to save
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="prose prose-sm max-w-none text-foreground/90 break-words">
+            {isUser ? (
+              <p className="leading-7 whitespace-pre-wrap">{message.content}</p>
+            ) : (
+              <ReactMarkdown components={components as never}>
+                {message.content}
+              </ReactMarkdown>
+            )}
+          </div>
+        )}
 
         {isStreaming && (
           <div className="flex items-center gap-1 mt-2">
             <div className="w-2 h-2 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '0ms' }} />
             <div className="w-2 h-2 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '150ms' }} />
             <div className="w-2 h-2 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+        )}
+
+        {/* Action buttons - shown on hover */}
+        {!isStreaming && (
+          <div className="flex items-center gap-0.5 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* Copy - always available */}
+            <ActionButton
+              icon={copied ? Check : Copy}
+              label={copied ? 'Copied!' : 'Copy'}
+              onClick={handleCopy}
+            />
+            {/* Edit - user messages only */}
+            {isUser && onEditMessage && (
+              <ActionButton
+                icon={Pencil}
+                label="Edit"
+                onClick={() => { setEditContent(message.content); setIsEditing(true); }}
+              />
+            )}
+            {/* Regenerate - last assistant message only */}
+            {!isUser && isLastAssistant && onRegenerate && (
+              <ActionButton
+                icon={RotateCcw}
+                label="Regenerate"
+                onClick={() => onRegenerate(message.id)}
+              />
+            )}
+            {/* Delete - always available */}
+            {onDeleteMessage && (
+              <ActionButton
+                icon={Trash2}
+                label="Delete"
+                onClick={() => onDeleteMessage(message.id)}
+                className="hover:text-destructive"
+              />
+            )}
           </div>
         )}
       </div>

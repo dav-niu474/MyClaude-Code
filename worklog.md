@@ -242,3 +242,139 @@ Build the complete frontend for Claude Code-like AI Agent experience, including 
 - No z-ai-web-dev-sdk imports in client-side code
 - All components use 'use client' directive where needed
 - Responsive design maintained throughout
+
+---
+## Task ID: 1 - frontend-engineer (Settings Enhancement)
+### Work Task
+Enhance the Settings Dialog in AppShell.tsx to support model selection, temperature slider, system prompt textarea, and session rename. Update settingsStore with new fields.
+
+### Work Summary
+
+#### 1. Settings Store Updates (`src/stores/settingsStore.ts`)
+- Added `temperature: number` (default 0.7) with `setTemperature(t: number)` action
+- Added `systemPrompt: string` (default empty) with `setSystemPrompt(p: string)` action
+- All new fields persist to localStorage via existing Zustand persist middleware
+
+#### 2. Enhanced Settings Dialog (`src/components/layout/AppShell.tsx`)
+- **Dialog widened** from `sm:max-w-md` to `sm:max-w-lg` with `max-h-[85vh] overflow-y-auto` for scrollable content
+- **Appearance section**: Retained with added icon header (Sun) and description text
+- **Session Name section** (new): Input field + Save button to rename current session via PATCH /api/sessions. Shows current session name pre-filled, disabled when no active session
+- **AI Model section** (new): shadcn Select dropdown with 3 options: "default" (Standard model), "claude-sonnet-4" (Balanced speed & quality), "claude-opus-4" (Maximum capability). Each shows label + description
+- **Temperature section** (new): shadcn Slider from 0.0 to 1.0 (step 0.1) with live Badge showing current value. Labels: "Precise" / "Balanced" / "Creative"
+- **System Prompt section** (new): shadcn Textarea with placeholder text and "Reset to Default" button (RotateCcw icon). Custom prompt gets prepended to agent system prompt on the backend
+- All sections separated by `<Separator />` components with icon headers and descriptions
+- New icons imported: Pencil, RotateCcw, Sparkles, Thermometer, MessageCircle
+- New UI components imported: Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Slider, Textarea, Label
+
+#### 3. Session Rename API (`src/app/api/sessions/route.ts`)
+- Added `PATCH /api/sessions` endpoint for updating session properties
+- Accepts `{ id, title?, model?, systemPrompt? }` in request body
+- Verifies session ownership before update
+- Returns updated session object
+
+#### 4. Chat API Updates (`src/app/api/chat/route.ts`)
+- Accepts `model`, `temperature`, `systemPrompt` from request body
+- Custom system prompt is prepended to agent system prompt under "## User's Custom Instructions" heading
+- Temperature and model are passed to `zai.chat.completions.create()` when non-default
+
+#### 5. Frontend Chat Integration (`src/components/layout/AppShell.tsx`)
+- `AppContent` now destructures `model`, `temperature`, `systemPrompt` from `useSettingsStore`
+- `sendMessageWithSession` sends model/temperature/systemPrompt in POST body to `/api/chat`
+
+#### 6. Quality Assurance
+- All ESLint checks pass with zero errors
+- Dev server running successfully
+- All settings persist to localStorage via Zustand
+- Clean section headers with icons and descriptions throughout
+
+---
+## Task ID: 6 - frontend-engineer
+### Work Task
+Add "Export Conversation" functionality to AppShell.tsx — export button in top bar, export option in session dropdown menu, with markdown file download.
+
+### Work Summary
+
+#### 1. Export Conversation Utility Function
+- Added `exportConversation(messages: Message[], sessionTitle: string)` function in `src/components/layout/AppShell.tsx`
+- Generates a well-formatted Markdown document with:
+  - Session title as H1 heading
+  - Export timestamp ("Exported from MyClaude Code on...")
+  - Each message formatted with role headers (`**You**` / `**Claude**`) separated by horizontal rules
+- Creates a Blob with `text/markdown` MIME type and triggers download
+- Filename sanitized from session title (non-alphanumeric chars replaced with hyphens, lowercased)
+- Properly cleans up the Object URL after download
+
+#### 2. Top Bar Export Button
+- Added `Download` icon button in the top bar (left of the "Online" badge)
+- Wrapped in a `Tooltip` with "Export as Markdown" label
+- Button is **disabled** when there are no messages (`messages.length === 0`)
+- Exports the current session's messages from the chat store in-memory
+
+#### 3. Sidebar Session Dropdown Export
+- Added "Export" option to each session's "..." dropdown menu in the sidebar
+- Uses the `Download` icon with label text
+- Fetches messages for the selected session via `GET /api/messages?sessionId=...`
+- On success, calls `exportConversation()` with fetched messages and session title
+- Separated from "Delete" option by a `DropdownMenuSeparator`
+- Error handling with console.error fallback
+
+#### 4. Quality Assurance
+- All ESLint checks pass with zero errors
+- Dev server running successfully, no compilation errors
+- No new dependencies added — uses existing lucide-react and shadcn/ui components
+
+---
+## Task ID: 2+4+7 - Main Agent
+### Work Task
+Implement message actions (copy, edit, regenerate, delete), keyboard shortcuts, scroll-to-bottom button, and image upload support.
+
+### Work Summary
+
+#### 1. Message Actions (`src/components/chat/ChatMessage.tsx`)
+- Added hover action toolbar with `ActionButton` component (icon + tooltip)
+- **Copy Message**: Copies full message content to clipboard with checkmark feedback (2s timeout)
+- **Edit** (user messages only): Inline textarea edit mode with Save/Cancel buttons. Save & Resubmit removes subsequent messages and re-sends. Supports Cmd+Enter to save, Escape to cancel
+- **Regenerate** (last assistant message only): Removes last assistant response and re-sends the preceding user message
+- **Delete** (all messages): Removes message from UI with red hover color
+- New props: `onRegenerate`, `onEditMessage`, `onDeleteMessage`, `isLastAssistant`
+- Actions only visible on hover via `opacity-0 group-hover:opacity-100`
+
+#### 2. Message Action Handlers (`src/components/layout/AppShell.tsx`)
+- `handleRegenerateMessage(msgId)`: Finds user message before the assistant message, removes it and all subsequent from UI, re-sends user message
+- `handleEditMessage(msgId, newContent)`: Removes message and all subsequent, re-sends with new content (conversation forking)
+- `handleDeleteMessage(msgId)`: Simply removes message from Zustand store
+- `lastAssistantMsgId`: Computed via useMemo to find the last assistant message for conditional regenerate button display
+
+#### 3. Global Keyboard Shortcuts (`src/components/layout/AppShell.tsx`)
+- **Escape**: Stop streaming when active
+- **Cmd/Ctrl + K**: Create new chat
+- **Cmd/Ctrl + ,**: Open settings dialog
+- **Cmd/Ctrl + /**: Toggle sidebar collapse (only when not focused on input/textarea)
+- Shortcuts registered via `window.addEventListener('keydown', ...)` with proper cleanup
+- Input focus detection to prevent shortcut interference with typing
+
+#### 4. Scroll to Bottom Button (`src/components/layout/AppShell.tsx`)
+- Floating button appears when user scrolls up >100px from bottom
+- Scroll position tracked via `addEventListener('scroll', ...)` on chat container
+- Animated appearance/disappearance with Framer Motion (scale + opacity)
+- Positioned at `bottom-24 right-8` above the input area
+- Styled: `rounded-full`, shadow-lg, card background with backdrop-blur
+- Smooth scroll to bottom on click via `container.scrollTo({ behavior: 'smooth' })`
+
+#### 5. Image Upload Support (`src/components/layout/AppShell.tsx`)
+- Image upload button (ImageIcon) added to ChatInput via `children` prop
+- Hidden `<input type="file" accept="image/*" multiple>` for image selection
+- Images converted to base64 data URLs via FileReader
+- Attached image thumbnails shown as 20x20 preview cards below input
+- Each thumbnail has hover-visible remove button (X) with black/60 overlay
+- Images cleared after sending; message includes `[Attached image N]` references
+- ChatInput component updated to accept `children?: ReactNode` prop for extensibility
+
+#### 6. ChatInput Enhancement (`src/components/chat/ChatInput.tsx`)
+- Added `children?: ReactNode` prop to support extra action buttons from parent
+- Children rendered between the file attachment button and textarea
+
+#### 7. Quality Assurance
+- All ESLint checks pass with zero errors
+- Dev server running successfully, all routes returning 200
+- No new dependencies added
