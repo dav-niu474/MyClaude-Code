@@ -39,3 +39,31 @@ Stage Summary:
 - API layer: 6 endpoints covering auth, sessions, messages, and chat
 - Frontend: 4 main components + 3 Zustand stores
 - Ready for user testing in Preview Panel
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Vercel deployment + Neon PostgreSQL integration
+
+Work Log:
+- Verified new Vercel API token (vcp_8kpa...) with full project scope access
+- Created Vercel project `my-claude-code` (prj_mxLEjru5dQhU43fVDnNPYWxi3xMq) linked to GitHub repo
+- Configured JWT_SECRET and DATABASE_URL environment variables on Vercel
+- Switched Prisma schema from SQLite to PostgreSQL for production
+- Fixed build script (removed standalone copy commands not needed on Vercel)
+- Fixed vercel.json build configuration
+- Deleted old placeholder DATABASE_URL env var
+- Updated db.ts to read Neon Store env vars (data_POSTGRES_PRISMA_URL prefix)
+- Created db-setup.ts for automatic schema initialization via raw DDL
+- Added /api/setup endpoint and ensureSchema() to all API routes
+- Fixed SQL syntax error (constraint keyword not quoted)
+- Fixed serverless schema initialization (always run DDL, not skip after one table check)
+- Verified: register, login, session CRUD, chat all working on production
+- User provided Neon integration via Vercel Store (data_ prefixed env vars)
+
+Stage Summary:
+- Production URL: https://my-claude-code.vercel.app
+- GitHub auto-deploy: push to main triggers build
+- Neon PostgreSQL: auto schema init, all 4 tables (User, Session, Message, UserSettings)
+- All API endpoints verified working on production
+- Environment: Vercel Hobby plan, Neon PostgreSQL, Next.js 16
