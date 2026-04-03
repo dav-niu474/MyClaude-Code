@@ -5,8 +5,23 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 function createPrismaClient() {
+  // Support both Vercel Neon Store (data_ prefix) and direct env vars
+  const databaseUrl =
+    process.env.data_POSTGRES_PRISMA_URL ||
+    process.env.DATABASE_URL
+
+  const directUrl =
+    process.env.data_POSTGRES_URL_NON_POOLING ||
+    process.env.DIRECT_URL
+
   return new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['query'] : [],
+    datasources: {
+      db: {
+        url: databaseUrl || '',
+        directUrl: directUrl,
+      },
+    },
   })
 }
 
