@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { hash } from 'crypto';
+import { ensureSchema } from '@/lib/db-setup';
 
 function hashPassword(password: string): string {
   return hash('sha256', password).toString('hex');
@@ -12,6 +13,8 @@ function verifyPassword(password: string, hashValue: string): boolean {
 
 export async function POST(request: Request) {
   try {
+    await ensureSchema();
+
     const body = await request.json();
     const { email, password } = body;
 

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getUserFromRequest } from '../auth/me/route';
+import { ensureSchema } from '@/lib/db-setup';
 
-// GET /api/messages?sessionId=xxx - Get all messages for a session
 export async function GET(request: Request) {
+  await ensureSchema();
   const user = getUserFromRequest(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

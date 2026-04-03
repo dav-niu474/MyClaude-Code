@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { hash } from 'crypto';
+import { ensureSchema } from '@/lib/db-setup';
 
 // Simple password hashing using SHA-256 (for MVP, use bcrypt in production)
 function hashPassword(password: string): string {
@@ -9,6 +10,9 @@ function hashPassword(password: string): string {
 
 export async function POST(request: Request) {
   try {
+    // Auto-initialize database schema if needed
+    await ensureSchema();
+
     const body = await request.json();
     const { email, name, password } = body;
 

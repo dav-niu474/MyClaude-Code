@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getUserFromRequest } from '../auth/me/route';
+import { ensureSchema } from '@/lib/db-setup';
 
 // GET /api/sessions - List all sessions for current user
 export async function GET(request: Request) {
+  await ensureSchema();
   const user = getUserFromRequest(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -29,6 +31,7 @@ export async function GET(request: Request) {
 
 // POST /api/sessions - Create a new session
 export async function POST(request: Request) {
+  await ensureSchema();
   const user = getUserFromRequest(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -51,6 +54,7 @@ export async function POST(request: Request) {
 
 // DELETE /api/sessions - Delete a session
 export async function DELETE(request: Request) {
+  await ensureSchema();
   const user = getUserFromRequest(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

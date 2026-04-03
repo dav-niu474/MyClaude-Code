@@ -1,5 +1,6 @@
 import { db } from '@/lib/db';
 import { getUserFromRequest } from '../auth/me/route';
+import { ensureSchema } from '@/lib/db-setup';
 import ZAI from 'z-ai-web-dev-sdk';
 
 const DEFAULT_SYSTEM_PROMPT = `You are Claude Code, an AI-powered coding assistant. You help users with:
@@ -20,6 +21,8 @@ export async function POST(request: Request) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+
+  await ensureSchema();
 
   const body = await request.json();
   const { sessionId, message } = body;
