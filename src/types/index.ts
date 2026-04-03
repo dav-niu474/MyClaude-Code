@@ -24,10 +24,20 @@ export interface Message {
   createdAt: string;
 }
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: 'running' | 'completed' | 'error';
+  result?: string;
+}
+
 export interface ChatState {
   sessions: Session[];
   currentSessionId: string | null;
   messages: Message[];
   isStreaming: boolean;
   streamingContent: string;
+  toolCalls: ToolCall[];
+  activeToolName: string | null;
 }

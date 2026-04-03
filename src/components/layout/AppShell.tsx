@@ -18,6 +18,8 @@ import {
   Sun,
   Monitor,
   X,
+  FileCode,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,7 +50,9 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { AuthPage } from '@/components/auth/AuthPage';
 import { ChatMessage } from '@/components/chat/ChatMessage';
 import { ChatInput } from '@/components/chat/ChatInput';
-import { Session, Message } from '@/types';
+import { ToolCallCard } from '@/components/chat/ToolCallCard';
+import { WorkspacePanel } from '@/components/workspace/WorkspacePanel';
+import { Session, Message, ToolCall } from '@/types';
 import { useTheme } from 'next-themes';
 
 function EmptyState({ onNewChat }: { onNewChat: () => void }) {
@@ -166,14 +170,63 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   );
 }
 
+function getToolStatusMessage(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case 'web_search':
+      return `Searching the web for "${args.query}"`;
+    case 'file_read':
+      return `Reading ${args.path}`;
+    case 'file_write':
+      return `Writing to ${args.path}`;
+    case 'file_edit':
+      return `Editing ${args.path}`;
+    case 'file_list':
+      return 'Listing workspace files';
+    case 'code_analyze':
+      return `Analyzing ${args.language || ''} code`;
+    default:
+      return `Running ${name}`;
+  }
+}
+
+function ActivityIndicator({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const runningTools = toolCalls.filter((tc) => tc.status === 'running');
+  const lastRunning = runningTools[runningTools.length - 1];
+
+  if (runningTools.length === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className="mx-4 md:mx-6 my-2"
+    >
+      <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-muted/30 border border-border">
+        <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin flex-shrink-0" />
+        <span className="text-xs text-muted-foreground">
+          Claude is {getToolStatusMessage(lastRunning.name, lastRunning.arguments).toLowerCase()}...
+        </span>
+        {runningTools.length > 1 && (
+          <span className="text-[10px] text-muted-foreground/60 bg-muted px-1.5 py-0.5 rounded-full">
+            +{runningTools.length - 1} more
+          </span>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
 function AppContent() {
   const {
     user, isAuthenticated, isLoading, logout
   } = useAuthStore();
   const {
     sessions, currentSessionId, messages, isStreaming, streamingContent,
+    toolCalls, activeToolName,
     setSessions, setCurrentSession, addSession, removeSession,
     setStreaming, setStreamingContent, appendStreamingContent, addMessage, reset,
+    addToolCall, updateToolCall, clearToolCalls, setActiveToolName,
   } = useChatStore();
   const { sidebarCollapsed, setSidebarCollapsed } = useSettingsStore();
 
@@ -182,6 +235,7 @@ function AppContent() {
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'chat' | 'files'>('chat');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -212,7 +266,7 @@ function AppContent() {
     requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, toolCalls]);
 
   const loadSessions = async () => {
     try {
@@ -302,6 +356,7 @@ function AppContent() {
 
     setStreaming(true);
     setStreamingContent('');
+    clearToolCalls();
 
     try {
       const res = await fetch('/api/chat', {
@@ -319,13 +374,18 @@ function AppContent() {
 
       const decoder = new TextDecoder();
       let fullContent = '';
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        buffer += chunk;
+
+        // Process complete SSE lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -334,12 +394,33 @@ function AppContent() {
 
             try {
               const parsed = JSON.parse(data);
+
               if (parsed.type === 'delta') {
                 fullContent += parsed.content;
                 setStreamingContent(fullContent);
               } else if (parsed.type === 'done') {
                 fullContent = parsed.content;
                 setStreamingContent(fullContent);
+              } else if (parsed.type === 'tool_call') {
+                // AI wants to call a tool
+                const toolCall: ToolCall = {
+                  id: parsed.id,
+                  name: parsed.name,
+                  arguments: parsed.arguments || {},
+                  status: 'running',
+                };
+                addToolCall(toolCall);
+              } else if (parsed.type === 'tool_result') {
+                // Tool execution result
+                updateToolCall(parsed.id, {
+                  status: parsed.success ? 'completed' : 'error',
+                  result: parsed.content,
+                });
+              } else if (parsed.type === 'tool_call_progress') {
+                // Tool is executing
+                updateToolCall(parsed.id, {
+                  status: parsed.status || 'running',
+                });
               } else if (parsed.type === 'error') {
                 console.error('Stream error:', parsed.error);
               }
@@ -375,12 +456,14 @@ function AppContent() {
     } finally {
       setStreaming(false);
       setStreamingContent('');
+      setActiveToolName(null);
     }
   };
 
   const handleStopStreaming = () => {
     abortControllerRef.current?.abort();
     setStreaming(false);
+    setActiveToolName(null);
     // Keep whatever content was streamed
     if (streamingContent) {
       addMessage({
@@ -398,6 +481,8 @@ function AppContent() {
     await logout();
     reset();
   };
+
+  const hasActiveContent = currentSessionId || messages.length > 0;
 
   // Auth loading
   if (isLoading) {
@@ -660,36 +745,126 @@ function AppContent() {
           </div>
         </div>
 
-        {/* Chat Area */}
-        {currentSessionId || messages.length > 0 ? (
+        {/* Main area: Tabs + Content */}
+        {hasActiveContent ? (
           <>
-            <div ref={chatContainerRef} className="flex-1 overflow-y-auto">
-              <div className="max-w-3xl mx-auto">
-                {messages.map((msg: Message) => (
-                  <ChatMessage key={msg.id} message={msg} />
-                ))}
-                {isStreaming && streamingContent && (
-                  <ChatMessage
-                    message={{
-                      id: 'streaming',
-                      sessionId: currentSessionId || '',
-                      role: 'assistant',
-                      content: streamingContent,
-                      createdAt: new Date().toISOString(),
-                    }}
-                    isStreaming
+            {/* Tab bar */}
+            <div className="flex items-center border-b border-border bg-muted/20 px-4">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors relative',
+                  activeTab === 'chat'
+                    ? 'text-foreground'
+                    : 'text-muted-foreground hover:text-foreground/70'
+                )}
+              >
+                <MessageSquare className="w-4 h-4" />
+                Chat
+                {activeTab === 'chat' && (
+                  <motion.div
+                    layoutId="active-tab"
+                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full"
                   />
                 )}
-                <div ref={messagesEndRef} className="h-4" />
-              </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('files')}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors relative',
+                  activeTab === 'files'
+                    ? 'text-foreground'
+                    : 'text-muted-foreground hover:text-foreground/70'
+                )}
+              >
+                <FileCode className="w-4 h-4" />
+                Files
+                {activeTab === 'files' && (
+                  <motion.div
+                    layoutId="active-tab"
+                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full"
+                  />
+                )}
+              </button>
             </div>
 
-            <ChatInput
-              onSend={handleSendMessage}
-              onStop={handleStopStreaming}
-              disabled={isStreaming}
-              isStreaming={isStreaming}
-            />
+            {/* Tab content */}
+            <div className="flex-1 relative min-h-0">
+              <AnimatePresence mode="wait">
+                {activeTab === 'chat' && (
+                  <motion.div
+                    key="chat"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute inset-0 flex flex-col"
+                  >
+                    {/* Chat area */}
+                    <div ref={chatContainerRef} className="flex-1 overflow-y-auto">
+                      <div className="max-w-3xl mx-auto">
+                        {messages.map((msg: Message) => (
+                          <ChatMessage key={msg.id} message={msg} />
+                        ))}
+
+                        {/* Tool calls - rendered between user message and AI response */}
+                        <AnimatePresence>
+                          {toolCalls.map((tc) => (
+                            <ToolCallCard key={tc.id} toolCall={tc} />
+                          ))}
+                        </AnimatePresence>
+
+                        {/* Activity indicator */}
+                        <AnimatePresence>
+                          {isStreaming && toolCalls.some((tc) => tc.status === 'running') && (
+                            <ActivityIndicator toolCalls={toolCalls} />
+                          )}
+                        </AnimatePresence>
+
+                        {/* Streaming AI response */}
+                        {isStreaming && streamingContent && (
+                          <ChatMessage
+                            message={{
+                              id: 'streaming',
+                              sessionId: currentSessionId || '',
+                              role: 'assistant',
+                              content: streamingContent,
+                              createdAt: new Date().toISOString(),
+                            }}
+                            isStreaming
+                          />
+                        )}
+                        <div ref={messagesEndRef} className="h-4" />
+                      </div>
+                    </div>
+
+                    {/* Chat input */}
+                    <ChatInput
+                      onSend={handleSendMessage}
+                      onStop={handleStopStreaming}
+                      disabled={isStreaming}
+                      isStreaming={isStreaming}
+                    />
+                  </motion.div>
+                )}
+
+                {activeTab === 'files' && (
+                  <motion.div
+                    key="files"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute inset-0"
+                  >
+                    <WorkspacePanel
+                      open={activeTab === 'files'}
+                      onToggle={() => setActiveTab(activeTab === 'files' ? 'chat' : 'files')}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </>
         ) : (
           <EmptyState onNewChat={handleNewChat} />

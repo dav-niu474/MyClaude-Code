@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Session, Message } from '@/types';
+import { Session, Message, ToolCall } from '@/types';
 
 interface ChatState {
   sessions: Session[];
@@ -7,6 +7,8 @@ interface ChatState {
   messages: Message[];
   isStreaming: boolean;
   streamingContent: string;
+  toolCalls: ToolCall[];
+  activeToolName: string | null;
 
   // Actions
   setSessions: (sessions: Session[]) => void;
@@ -20,6 +22,10 @@ interface ChatState {
   appendStreamingContent: (chunk: string) => void;
   addMessage: (message: Message) => void;
   reset: () => void;
+  addToolCall: (call: ToolCall) => void;
+  updateToolCall: (id: string, updates: Partial<ToolCall>) => void;
+  clearToolCalls: () => void;
+  setActiveToolName: (name: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -28,11 +34,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isStreaming: false,
   streamingContent: '',
+  toolCalls: [],
+  activeToolName: null,
 
   setSessions: (sessions) => set({ sessions }),
 
   setCurrentSession: async (sessionId) => {
-    set({ currentSessionId: sessionId, messages: [], streamingContent: '' });
+    set({ currentSessionId: sessionId, messages: [], streamingContent: '', toolCalls: [], activeToolName: null });
     if (sessionId) {
       try {
         const res = await fetch(`/api/messages?sessionId=${sessionId}`);
@@ -60,6 +68,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       currentSessionId:
         state.currentSessionId === sessionId ? null : state.currentSessionId,
       messages: state.currentSessionId === sessionId ? [] : state.messages,
+      toolCalls: state.currentSessionId === sessionId ? [] : state.toolCalls,
+      activeToolName: state.currentSessionId === sessionId ? null : state.activeToolName,
     });
   },
 
@@ -84,5 +94,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [...state.messages, message],
     })),
 
-  reset: () => set({ messages: [], streamingContent: '', isStreaming: false }),
+  reset: () => set({ messages: [], streamingContent: '', isStreaming: false, toolCalls: [], activeToolName: null }),
+
+  addToolCall: (call) =>
+    set((state) => ({
+      toolCalls: [...state.toolCalls, call],
+      activeToolName: call.name,
+    })),
+
+  updateToolCall: (id, updates) =>
+    set((state) => ({
+      toolCalls: state.toolCalls.map((tc) =>
+        tc.id === id ? { ...tc, ...updates } : tc
+      ),
+      activeToolName: updates.status === 'running'
+        ? state.toolCalls.find((tc) => tc.id === id)?.name ?? state.activeToolName
+        : state.activeToolName,
+    })),
+
+  clearToolCalls: () => set({ toolCalls: [], activeToolName: null }),
+
+  setActiveToolName: (name) => set({ activeToolName: name }),
 }));

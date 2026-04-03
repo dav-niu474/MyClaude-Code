@@ -45,6 +45,22 @@ const CREATE_TABLES_SQL = [
     CONSTRAINT "UserSettings_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "UserSettings_userId_key" ON "UserSettings"("userId")`,
+  `CREATE TABLE IF NOT EXISTS "WorkspaceFile" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "sessionId" TEXT,
+    "path" TEXT NOT NULL,
+    "fileName" TEXT NOT NULL,
+    "content" TEXT NOT NULL DEFAULT '',
+    "language" TEXT,
+    "size" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "WorkspaceFile_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "WorkspaceFile_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session"("id") ON DELETE SET NULL ON UPDATE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "WorkspaceFile_userId_idx" ON "WorkspaceFile"("userId")`,
+  `CREATE INDEX IF NOT EXISTS "WorkspaceFile_sessionId_idx" ON "WorkspaceFile"("sessionId")`,
 ]
 
 let initPromise: Promise<void> | null = null
