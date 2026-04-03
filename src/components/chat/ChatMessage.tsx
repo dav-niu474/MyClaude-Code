@@ -1,11 +1,11 @@
 'use client';
 
-import { memo, useMemo, useState, useCallback } from 'react';
+import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Bot, User, RotateCcw, FileDown, Pencil, Save, X, Trash2 } from 'lucide-react';
+import { Copy, Check, Bot, User, RotateCcw, FileDown, Pencil, Save, X, Trash2, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import { Message } from '@/types';
@@ -329,6 +329,85 @@ export const ChatMessage = memo(function ChatMessage({
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isTTSLoading, setIsTTSLoading] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
+
+  // Cleanup blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  // Stop TTS playback
+  const stopSpeaking = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+    audioRef.current = null;
+    setIsSpeaking(false);
+  }, []);
+
+  // Toggle TTS
+  const handleToggleTTS = useCallback(async () => {
+    if (isSpeaking || isTTSLoading) {
+      stopSpeaking();
+      setIsTTSLoading(false);
+      return;
+    }
+
+    setIsTTSLoading(true);
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: message.content }),
+      });
+
+      if (!res.ok) throw new Error('TTS failed');
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
+
+      const audio = new Audio(url);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(url);
+        blobUrlRef.current = null;
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(url);
+        blobUrlRef.current = null;
+        audioRef.current = null;
+      };
+
+      await audio.play();
+      setIsSpeaking(true);
+    } catch (err) {
+      console.error('TTS error:', err);
+    } finally {
+      setIsTTSLoading(false);
+    }
+  }, [isSpeaking, isTTSLoading, message.content, stopSpeaking]);
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(message.content);
@@ -520,6 +599,15 @@ export const ChatMessage = memo(function ChatMessage({
                 icon={Pencil}
                 label="Edit"
                 onClick={() => { setEditContent(message.content); setIsEditing(true); }}
+              />
+            )}
+            {/* Read Aloud - assistant messages only */}
+            {!isUser && (
+              <ActionButton
+                icon={isTTSLoading ? Loader2 : (isSpeaking ? VolumeX : Volume2)}
+                label={isSpeaking ? 'Stop' : 'Read Aloud'}
+                onClick={handleToggleTTS}
+                className={cn(isSpeaking && 'text-primary')}
               />
             )}
             {/* Regenerate - last assistant message only */}

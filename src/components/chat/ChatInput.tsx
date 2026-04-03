@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, KeyboardEvent, useCallback, ReactNode } from 'react';
-import { Send, Square, Sparkles, Paperclip, X } from 'lucide-react';
+import { Send, Square, Sparkles, Paperclip, X, Mic, MicOff } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
@@ -39,8 +40,11 @@ export function ChatInput({ onSend, onStop, disabled, isStreaming, children }: C
   const [input, setInput] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const { currentSessionId } = useChatStore();
 
   useEffect(() => {
@@ -122,10 +126,96 @@ export function ChatInput({ onSend, onStop, disabled, isStreaming, children }: C
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  // Voice input / ASR
+  const toggleRecording = useCallback(async () => {
+    if (isRecording) {
+      // Stop recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        // Stop all tracks
+        stream.getTracks().forEach((track) => track.stop());
+
+        if (audioChunksRef.current.length === 0) return;
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+        // Convert to base64
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64Audio = reader.result as string;
+          try {
+            const res = await fetch('/api/asr', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ audio: base64Audio }),
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data.text) {
+                setInput((prev) => prev ? `${prev} ${data.text}` : data.text);
+                textareaRef.current?.focus();
+              }
+            } else {
+              toast.error('Failed to transcribe audio');
+            }
+          } catch {
+            toast.error('Failed to transcribe audio');
+          }
+        };
+        reader.readAsDataURL(audioBlob);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        toast.error('Microphone access denied. Please allow microphone access in your browser settings.');
+      } else {
+        toast.error('Failed to access microphone');
+      }
+    }
+  }, [isRecording]);
+
   return (
     <div className="border-t border-border bg-background/80 backdrop-blur-xl p-4">
       <div className="max-w-3xl mx-auto">
         <div className="relative flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-primary/30">
+          {/* Microphone button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              'h-8 w-8 rounded-xl flex-shrink-0 transition-colors',
+              isRecording
+                ? 'text-destructive hover:text-destructive/80 animate-pulse'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+            onClick={toggleRecording}
+            disabled={disabled || uploading}
+          >
+            {isRecording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+          </Button>
+
           {/* File attachment button */}
           <input
             ref={fileInputRef}

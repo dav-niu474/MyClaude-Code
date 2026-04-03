@@ -378,3 +378,173 @@ Implement message actions (copy, edit, regenerate, delete), keyboard shortcuts, 
 - All ESLint checks pass with zero errors
 - Dev server running successfully, all routes returning 200
 - No new dependencies added
+
+---
+## Task ID: backend-apis - backend-engineer
+### Work Task
+Create 3 new API routes for VLM (Vision), TTS (Text-to-Speech), and ASR (Speech-to-Text) using z-ai-web-dev-sdk.
+
+### Work Summary
+
+#### 1. Vision API (`src/app/api/vision/route.ts`)
+- **POST /api/vision** endpoint accepting `{ prompt: string, images: string[] }` (base64 data URLs)
+- Auth check via `getUserFromRequest`, `ensureSchema()` call
+- Uses `zai.chat.completions.createVision()` with multimodal content array (text + image_url entries)
+- Returns JSON `{ success: true, content: string }`
+- Input validation: requires prompt string and non-empty images array
+- Error handling with 500 status
+- `export const dynamic = 'force-dynamic'`
+
+#### 2. TTS API (`src/app/api/tts/route.ts`)
+- **POST /api/tts** endpoint accepting `{ text: string, voice?: string, speed?: number }`
+- Auth check via `getUserFromRequest`, `ensureSchema()` call
+- Text truncated to 1024 chars with ellipsis if longer
+- Uses `zai.audio.tts.create()` with defaults: voice='tongtong', speed=1.0, format='wav', stream=false
+- Returns audio buffer directly with proper headers: `Content-Type: audio/wav`, `Content-Length`
+- Uses `new Response(buffer, ...)` for binary response (not JSON)
+- Error handling returns JSON error with appropriate status codes
+
+#### 3. ASR API (`src/app/api/asr/route.ts`)
+- **POST /api/asr** endpoint accepting `{ audio: string }` (base64-encoded audio)
+- Auth check via `getUserFromRequest`, `ensureSchema()` call
+- Uses `zai.audio.asr.create({ file_base64: audio })`
+- Returns JSON `{ success: true, text: string }`
+- Input validation: requires audio string
+- Error handling with 500 status
+
+#### 4. Quality Assurance
+- All ESLint checks pass with zero errors
+- All 3 routes follow existing project patterns (auth, ensureSchema, error handling)
+- z-ai-web-dev-sdk only used in server-side code
+- Consistent code style with existing API routes (web-search, chat, etc.)
+- Dev server running successfully with no compilation errors
+
+---
+## Task ID: frontend-2 - frontend-engineer
+### Work Task
+Implement Prompt Templates sidebar section, Session Grouping by Date, and Command Palette (Cmd+K) in AppShell.tsx.
+
+### Work Summary
+
+#### 1. New Imports Added (`src/components/layout/AppShell.tsx`)
+- **Lucide icons**: `Code, Bug, BookOpen, Layers, FileText, GitBranch, Globe, ChevronDown, ChevronRight, Zap`
+- **Command UI components**: `CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandShortcut` from `@/components/ui/command`
+- **date-fns utilities**: `isToday, isYesterday, isAfter, subDays` for session date grouping
+
+#### 2. Prompt Templates (`src/components/layout/AppShell.tsx`)
+- Defined `PROMPT_TEMPLATES` constant array with 8 templates:
+  - Write Code, Debug Code, Explain Code, Architecture, Write Tests, Git Commands, Web Search, Review PR
+  - Each has an icon, label, and prompt text
+- Added collapsible **Templates** section in the sidebar between "New Chat" button and "Search"
+- Uses `ChevronDown`/`ChevronRight` icons for expand/collapse toggle
+- Renders as a 2-column grid of small icon+label buttons
+- On click, directly calls `handleSendMessage(template.prompt)` which auto-creates a session if needed
+- State: `templatesExpanded` (default `true`) controls visibility
+
+#### 3. Session Grouping by Date (`src/components/layout/AppShell.tsx`)
+- Sessions in the sidebar are now grouped into date categories using `date-fns`:
+  - **Today** - sessions created today (`isToday`)
+  - **Yesterday** - sessions created yesterday (`isYesterday`)
+  - **Previous 7 Days** - sessions within the last week (`isAfter(createdAt, subDays(now, 7))`)
+  - **Older** - sessions older than one week
+- Each group has a labeled header with uppercase tracking-wider styling
+- When search is active, falls back to a flat ungrouped list
+- Empty groups are hidden automatically (only rendered if sessions exist)
+- All session item interactions preserved (click to switch, dropdown with Export/Delete)
+
+#### 4. Command Palette (`src/components/layout/AppShell.tsx`)
+- Implemented using shadcn `CommandDialog` component
+- Triggered by **Cmd/Ctrl + K** (keyboard shortcut updated from creating new chat)
+- Three command groups:
+  - **Actions**: New Chat (⌘N shortcut badge), Settings (⌘, shortcut), Toggle Sidebar (⌘/ shortcut), Export Conversation (disabled when no messages)
+  - **Recent Sessions**: Up to 8 most recent sessions with message count, click to switch
+  - **Templates**: All 8 prompt templates with icons, click to send
+- Each item has icon + label + optional shortcut badge
+- On select, executes the action and closes the dialog
+- Fuzzy search built-in via cmdk library
+- State: `commandPaletteOpen` controls visibility
+
+#### 5. Keyboard Shortcut Update
+- **Cmd/Ctrl + K** now opens the Command Palette instead of directly creating a new chat
+- New Chat is still accessible via the Command Palette or the sidebar button
+
+#### 6. Quality Assurance
+- All ESLint checks pass with zero errors
+- Dev server running successfully
+- No new dependencies added (cmdk, date-fns, lucide-react already installed)
+- All existing functionality preserved (auth, sessions, settings, export, etc.)
+- Responsive design maintained
+
+---
+## Task ID: frontend-1 - frontend-engineer
+### Work Task
+Implement TTS play button on messages, voice input mic button, drag & drop file upload, and toast notifications.
+
+### Work Summary
+
+#### 1. TTS Read Aloud Button (`src/components/chat/ChatMessage.tsx`)
+- Added `Volume2`, `VolumeX`, and `Loader2` icons from lucide-react
+- Added `isSpeaking` and `isTTSLoading` state variables
+- Added `useRef<HTMLAudioElement>` (`audioRef`) and `useRef<string>` (`blobUrlRef`) for audio playback management
+- New `stopSpeaking` callback: pauses audio, revokes blob URL, cleans up refs
+- New `handleToggleTTS` callback:
+  - If currently speaking or loading: stops playback
+  - Otherwise: fetches `POST /api/tts` with `{ text: message.content }`, gets WAV audio blob, creates blob URL, plays via `Audio` element
+- Auto-cleanup in `useEffect` on unmount: revokes blob URL and pauses audio
+- Audio events (`onended`, `onerror`) handle cleanup automatically
+- New action button in the hover toolbar: shows `Volume2` icon normally, `Loader2` while loading, `VolumeX` while speaking
+- Button labeled "Read Aloud" / "Stop", highlighted with `text-primary` when active
+- Button only appears on assistant messages (not user messages)
+
+#### 2. Voice Input / ASR Mic Button (`src/components/chat/ChatInput.tsx`)
+- Added `Mic` and `MicOff` icons from lucide-react
+- Imported `toast` from `sonner` for error notifications
+- Added `isRecording` state, `mediaRecorderRef`, and `audioChunksRef` refs
+- New `toggleRecording` callback:
+  - **Stop recording**: calls `mediaRecorder.stop()`, sets `isRecording = false`
+  - **Start recording**: requests microphone via `navigator.mediaDevices.getUserMedia({ audio: true })`
+  - Creates `MediaRecorder` with `ondataavailable` to collect audio chunks
+  - On `onstop`: converts audio chunks to Blob, reads as base64 data URL, sends to `POST /api/asr` with `{ audio: base64Audio }`
+  - On successful ASR response: appends transcribed text to input field, focuses textarea
+  - On error: shows toast notification
+- **Error handling**: catches `NotAllowedError` specifically with message about browser settings
+- Mic button styling: turns red/destructive with `animate-pulse` while recording, uses `MicOff` icon; normal `Mic` icon when idle
+- Positioned before the Paperclip button in the input toolbar
+
+#### 3. Drag & Drop File Upload (`src/components/layout/AppShell.tsx`)
+- Added `isDragOver` state variable
+- Added `Upload` icon import from lucide-react
+- Four drag event handlers on the root `<div>`:
+  - `handleDragEnter`: prevents default, sets `isDragOver = true`
+  - `handleDragOver`: prevents default, stops propagation
+  - `handleDragLeave`: only sets `isDragOver = false` when leaving the container itself (not children)
+  - `handleDrop`: processes dropped files
+- Drop handler logic:
+  - **Image files** (`file.type.startsWith('image/')`): converts to base64 data URL via FileReader and adds to `attachedImages` state
+  - **Text/code files**: detected via MIME type or file extension regex (30+ extensions), reads content, infers language, uploads to `/api/workspace/files`
+  - Shows toast notifications for files uploaded to workspace and images attached
+- **Overlay UI**: Absolute positioned overlay with z-[100], animated via AnimatePresence:
+  - Semi-transparent primary/5 background with backdrop blur
+  - Centered card with dashed border, Upload icon, "Drop files here" heading
+  - Subtitle explaining behavior (images attached, code files uploaded to workspace)
+
+#### 4. Toast Notifications (`src/components/layout/AppShell.tsx`)
+- Confirmed `<Toaster />` from sonner already present in `src/app/layout.tsx` with `richColors position="bottom-right"`
+- Imported `toast` from `sonner` in AppShell.tsx
+- Added toast notifications to the following actions:
+  - **New chat created**: `toast.success('New chat created')` in `handleNewChat`
+  - **New chat failed**: `toast.error('Failed to create chat')` in catch block
+  - **Chat deleted**: `toast.success('Chat deleted')` in `confirmDeleteSession`
+  - **Delete failed**: `toast.error('Failed to delete chat')` in catch block
+  - **Conversation exported**: `toast.success('Conversation exported')` in `exportConversation`
+  - **File upload**: `toast.success('N file(s) uploaded to workspace')` in drag & drop handler
+  - **Image attached**: `toast.success('N image(s) attached')` in drag & drop handler
+  - **ASR errors**: `toast.error('Failed to transcribe audio')` in ChatInput mic handler
+  - **Mic denied**: `toast.error('Microphone access denied...')` in ChatInput mic handler
+
+#### 5. Quality Assurance
+- All ESLint checks pass with zero errors
+- Dev server compiling successfully
+- No new dependencies added (sonner, lucide-react already installed)
+- All existing functionality preserved
+- z-ai-web-dev-sdk only used in server-side API routes

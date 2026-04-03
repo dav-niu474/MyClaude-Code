@@ -28,6 +28,17 @@ import {
   Download,
   ArrowDown,
   ImageIcon,
+  Code,
+  Bug,
+  BookOpen,
+  Layers,
+  FileText,
+  GitBranch,
+  Globe,
+  ChevronDown,
+  ChevronRight,
+  Zap,
+  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,7 +72,18 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import {
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandShortcut,
+} from '@/components/ui/command';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+import { isToday, isYesterday, isAfter, subDays } from 'date-fns';
 import { useAuthStore } from '@/stores/authStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -131,6 +153,17 @@ function EmptyState({ onNewChat }: { onNewChat: () => void }) {
     </div>
   );
 }
+
+const PROMPT_TEMPLATES = [
+  { icon: Code, label: 'Write Code', prompt: 'Write a function that...' },
+  { icon: Bug, label: 'Debug Code', prompt: 'Help me debug this code. Here\'s the error:...' },
+  { icon: BookOpen, label: 'Explain Code', prompt: 'Explain how this code works:...' },
+  { icon: Layers, label: 'Architecture', prompt: 'Design the architecture for...' },
+  { icon: FileText, label: 'Write Tests', prompt: 'Write unit tests for...' },
+  { icon: GitBranch, label: 'Git Commands', prompt: 'What git command should I use to...' },
+  { icon: Globe, label: 'Web Search', prompt: 'Search the web for...' },
+  { icon: MessageSquare, label: 'Review PR', prompt: 'Review this pull request:...' },
+] as const;
 
 const DEFAULT_SYSTEM_PROMPT = '';
 
@@ -414,6 +447,7 @@ function exportConversation(messages: Message[], sessionTitle: string) {
   a.download = `${sessionTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`;
   a.click();
   URL.revokeObjectURL(url);
+  toast.success('Conversation exported');
 }
 
 function AppContent() {
@@ -437,6 +471,9 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<'chat' | 'files'>('chat');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [templatesExpanded, setTemplatesExpanded] = useState(true);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -500,10 +537,10 @@ function AppContent() {
         return;
       }
 
-      // Cmd/Ctrl + K → new chat
+      // Cmd/Ctrl + K → open command palette
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        handleNewChat();
+        setCommandPaletteOpen(true);
         return;
       }
 
@@ -546,6 +583,82 @@ function AppContent() {
     setAttachedImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  // Drag & drop handlers
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === e.target) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    let textFilesUploaded = 0;
+    let imageFilesAdded = 0;
+
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setAttachedImages((prev) => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+        imageFilesAdded++;
+      } else if (file.type.startsWith('text/') || file.name.match(/\.(ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|hpp|cs|php|swift|kt|html|css|scss|json|yaml|yml|xml|sql|md|sh|bash|txt|csv|toml|ini|cfg|env|dockerfile|log)$/i)) {
+        try {
+          const content = await file.text();
+          const path = file.name;
+          const language = (() => {
+            const ext = path.split('.').pop()?.toLowerCase() || '';
+            const map: Record<string, string> = {
+              ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+              py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+              c: 'c', cpp: 'cpp', cs: 'csharp', php: 'php', swift: 'swift',
+              kt: 'kotlin', html: 'html', css: 'css', scss: 'scss', json: 'json',
+              yaml: 'yaml', yml: 'yaml', xml: 'xml', sql: 'sql', md: 'markdown',
+              sh: 'bash', bash: 'bash',
+            };
+            return map[ext] || 'text';
+          })();
+
+          await fetch('/api/workspace/files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content, language }),
+          });
+          textFilesUploaded++;
+        } catch (err) {
+          console.error('Failed to upload dropped file:', file.name, err);
+        }
+      }
+    }
+
+    if (textFilesUploaded > 0) {
+      toast.success(`${textFilesUploaded} file${textFilesUploaded > 1 ? 's' : ''} uploaded to workspace`);
+    }
+    if (imageFilesAdded > 0) {
+      toast.success(`${imageFilesAdded} image${imageFilesAdded > 1 ? 's' : ''} attached`);
+    }
+  }, []);
+
   const loadSessions = async () => {
     try {
       const res = await fetch('/api/sessions');
@@ -570,9 +683,11 @@ function AppContent() {
         addSession(data.session);
         setCurrentSession(data.session.id);
         setSidebarMobileOpen(false);
+        toast.success('New chat created');
       }
     } catch (error) {
       console.error('Failed to create session:', error);
+      toast.error('Failed to create chat');
     }
   };
 
@@ -589,9 +704,11 @@ function AppContent() {
       });
       if (res.ok) {
         removeSession(sessionToDelete);
+        toast.success('Chat deleted');
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
+      toast.error('Failed to delete chat');
     }
     setDeleteDialogOpen(false);
     setSessionToDelete(null);
@@ -834,7 +951,31 @@ function AppContent() {
   const currentSession = sessions.find((s) => s.id === currentSessionId);
 
   return (
-    <div className="h-dvh flex overflow-hidden bg-background">
+    <div
+      className="h-dvh flex overflow-hidden bg-background"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag & Drop Overlay */}
+      <AnimatePresence>
+        {isDragOver && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[100] flex items-center justify-center bg-primary/5 backdrop-blur-sm"
+          >
+            <div className="border-2 border-dashed border-primary/40 rounded-2xl p-12 flex flex-col items-center gap-3 bg-background/80">
+              <Upload className="w-10 h-10 text-primary/60" />
+              <p className="text-sm font-medium text-foreground">Drop files here</p>
+              <p className="text-xs text-muted-foreground">Images will be attached, code files will be uploaded to workspace</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Mobile sidebar overlay */}
       <AnimatePresence>
         {sidebarMobileOpen && (
@@ -889,6 +1030,35 @@ function AppContent() {
           </Button>
         </div>
 
+        {/* Templates Section */}
+        <div className="px-3 pb-2">
+          <button
+            onClick={() => setTemplatesExpanded(!templatesExpanded)}
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full py-1"
+          >
+            {templatesExpanded ? (
+              <ChevronDown className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5" />
+            )}
+            Templates
+          </button>
+          {templatesExpanded && (
+            <div className="grid grid-cols-2 gap-1 mt-1">
+              {PROMPT_TEMPLATES.map((template) => (
+                <button
+                  key={template.label}
+                  onClick={() => handleSendMessage(template.prompt)}
+                  className="flex items-center gap-1.5 px-2 py-1.5 text-xs rounded-lg hover:bg-muted/50 transition-colors text-left truncate group"
+                >
+                  <template.icon className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground group-hover:text-foreground transition-colors" />
+                  <span className="truncate">{template.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Search */}
         <div className="px-3 pb-2">
           <div className="relative">
@@ -902,80 +1072,195 @@ function AppContent() {
           </div>
         </div>
 
-        {/* Session List */}
+        {/* Session List - Grouped by Date */}
         <ScrollArea className="flex-1 px-2">
-          <div className="space-y-0.5 py-1">
+          <div className="space-y-3 py-1">
             {filteredSessions.length === 0 && (
               <div className="text-center text-xs text-muted-foreground py-8">
                 {searchQuery ? 'No matching chats' : 'No chats yet'}
               </div>
             )}
-            {filteredSessions.map((session: Session) => (
-              <div
-                key={session.id}
-                className={cn(
-                  'group flex items-center gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors',
-                  currentSessionId === session.id
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-muted/50'
-                )}
-                onClick={() => {
-                  setCurrentSession(session.id);
-                  setSidebarMobileOpen(false);
-                }}
-              >
-                <MessageSquare className="w-4 h-4 flex-shrink-0 opacity-60" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{session.title}</div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {session._count.messages} messages
-                  </div>
-                </div>
+            {(() => {
+              const now = new Date();
+              const weekAgo = subDays(now, 7);
 
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-40">
-                    <DropdownMenuItem
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        try {
-                          const res = await fetch(`/api/messages?sessionId=${session.id}`);
-                          if (res.ok) {
-                            const data = await res.json();
-                            exportConversation(data.messages || [], session.title);
-                          }
-                        } catch (err) {
-                          console.error('Failed to export session:', err);
-                        }
-                      }}
-                    >
-                      <Download className="w-3.5 h-3.5 mr-2" />
-                      Export
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(session.id);
-                      }}
-                    >
-                      <Trash2 className="w-3.5 h-3.5 mr-2" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ))}
+              const todaySessions = filteredSessions.filter((s) =>
+                isToday(new Date(s.createdAt))
+              );
+              const yesterdaySessions = filteredSessions.filter((s) =>
+                isYesterday(new Date(s.createdAt))
+              );
+              const weekSessions = filteredSessions.filter((s) =>
+                isAfter(new Date(s.createdAt), weekAgo) &&
+                !isToday(new Date(s.createdAt)) &&
+                !isYesterday(new Date(s.createdAt))
+              );
+              const olderSessions = filteredSessions.filter((s) =>
+                !isAfter(new Date(s.createdAt), weekAgo)
+              );
+
+              const renderSessionGroup = (label: string, groupSessions: Session[]) => {
+                if (groupSessions.length === 0) return null;
+                return (
+                  <div key={label}>
+                    <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      {label}
+                    </div>
+                    <div className="space-y-0.5">
+                      {groupSessions.map((session: Session) => (
+                        <div
+                          key={session.id}
+                          className={cn(
+                            'group flex items-center gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors',
+                            currentSessionId === session.id
+                              ? 'bg-primary/10 text-primary'
+                              : 'hover:bg-muted/50'
+                          )}
+                          onClick={() => {
+                            setCurrentSession(session.id);
+                            setSidebarMobileOpen(false);
+                          }}
+                        >
+                          <MessageSquare className="w-4 h-4 flex-shrink-0 opacity-60" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm truncate">{session.title}</div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {session._count.messages} messages
+                            </div>
+                          </div>
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreHorizontal className="w-3.5 h-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-40">
+                              <DropdownMenuItem
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    const res = await fetch(`/api/messages?sessionId=${session.id}`);
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      exportConversation(data.messages || [], session.title);
+                                    }
+                                  } catch (err) {
+                                    console.error('Failed to export session:', err);
+                                  }
+                                }}
+                              >
+                                <Download className="w-3.5 h-3.5 mr-2" />
+                                Export
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteSession(session.id);
+                                }}
+                              >
+                                <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              };
+
+              if (searchQuery) {
+                // When searching, show flat list without grouping
+                return (
+                  <div className="space-y-0.5">
+                    {filteredSessions.map((session: Session) => (
+                      <div
+                        key={session.id}
+                        className={cn(
+                          'group flex items-center gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-colors',
+                          currentSessionId === session.id
+                            ? 'bg-primary/10 text-primary'
+                            : 'hover:bg-muted/50'
+                        )}
+                        onClick={() => {
+                          setCurrentSession(session.id);
+                          setSidebarMobileOpen(false);
+                        }}
+                      >
+                        <MessageSquare className="w-4 h-4 flex-shrink-0 opacity-60" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm truncate">{session.title}</div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {session._count.messages} messages
+                          </div>
+                        </div>
+
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="w-3.5 h-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            <DropdownMenuItem
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const res = await fetch(`/api/messages?sessionId=${session.id}`);
+                                  if (res.ok) {
+                                    const data = await res.json();
+                                    exportConversation(data.messages || [], session.title);
+                                  }
+                                } catch (err) {
+                                  console.error('Failed to export session:', err);
+                                }
+                              }}
+                            >
+                              <Download className="w-3.5 h-3.5 mr-2" />
+                              Export
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSession(session.id);
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
+
+              return (
+                <>
+                  {renderSessionGroup('Today', todaySessions)}
+                  {renderSessionGroup('Yesterday', yesterdaySessions)}
+                  {renderSessionGroup('Previous 7 Days', weekSessions)}
+                  {renderSessionGroup('Older', olderSessions)}
+                </>
+              );
+            })()}
           </div>
         </ScrollArea>
 
@@ -1310,6 +1595,98 @@ function AppContent() {
 
       {/* Settings Dialog */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      {/* Command Palette */}
+      <CommandDialog open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen}>
+        <CommandInput placeholder="Type a command or search..." />
+        <CommandList>
+          <CommandEmpty>No results found.</CommandEmpty>
+
+          {/* Actions */}
+          <CommandGroup heading="Actions">
+            <CommandItem
+              onSelect={() => {
+                handleNewChat();
+                setCommandPaletteOpen(false);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              <span>New Chat</span>
+              <CommandShortcut>⌘N</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                setSettingsOpen(true);
+                setCommandPaletteOpen(false);
+              }}
+            >
+              <Settings className="mr-2 h-4 w-4" />
+              <span>Settings</span>
+              <CommandShortcut>⌘,</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                setSidebarCollapsed(!sidebarCollapsed);
+                setCommandPaletteOpen(false);
+              }}
+            >
+              <PanelLeftClose className="mr-2 h-4 w-4" />
+              <span>Toggle Sidebar</span>
+              <CommandShortcut>⌘/</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                if (messages.length > 0) {
+                  exportConversation(messages, currentSession?.title || 'conversation');
+                }
+                setCommandPaletteOpen(false);
+              }}
+              disabled={messages.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              <span>Export Conversation</span>
+            </CommandItem>
+          </CommandGroup>
+
+          {/* Recent Sessions */}
+          {sessions.length > 0 && (
+            <CommandGroup heading="Recent Sessions">
+              {sessions.slice(0, 8).map((session) => (
+                <CommandItem
+                  key={session.id}
+                  onSelect={() => {
+                    setCurrentSession(session.id);
+                    setSidebarMobileOpen(false);
+                    setCommandPaletteOpen(false);
+                  }}
+                >
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  <span>{session.title}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {session._count.messages} msgs
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+
+          {/* Templates */}
+          <CommandGroup heading="Templates">
+            {PROMPT_TEMPLATES.map((template) => (
+              <CommandItem
+                key={template.label}
+                onSelect={() => {
+                  handleSendMessage(template.prompt);
+                  setCommandPaletteOpen(false);
+                }}
+              >
+                <template.icon className="mr-2 h-4 w-4" />
+                <span>{template.label}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
     </div>
   );
 }
