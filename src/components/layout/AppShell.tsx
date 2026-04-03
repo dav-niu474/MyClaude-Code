@@ -203,8 +203,15 @@ function AppContent() {
   }, [isAuthenticated]);
 
   // Auto-scroll on new messages
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = chatContainerRef.current;
+    if (!container) return;
+    // Use requestAnimationFrame to ensure DOM has updated
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
   }, [messages, streamingContent]);
 
   const loadSessions = async () => {
@@ -656,7 +663,7 @@ function AppContent() {
         {/* Chat Area */}
         {currentSessionId || messages.length > 0 ? (
           <>
-            <ScrollArea className="flex-1">
+            <div ref={chatContainerRef} className="flex-1 overflow-y-auto">
               <div className="max-w-3xl mx-auto">
                 {messages.map((msg: Message) => (
                   <ChatMessage key={msg.id} message={msg} />
@@ -675,7 +682,7 @@ function AppContent() {
                 )}
                 <div ref={messagesEndRef} className="h-4" />
               </div>
-            </ScrollArea>
+            </div>
 
             <ChatInput
               onSend={handleSendMessage}
